@@ -315,4 +315,26 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn readme_example() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::prelude::*;
+
+        let mut iter = LensesIter::try_from("departments.**.staff.*")?;
+        for expr in iter.by_ref().take(1) {
+            let expr = expr?;
+            match expr {
+                Expr::Lens(exprs) => {
+                    assert_eq!(exprs.len(), 3);
+                    assert_eq!(exprs[0], Expr::Identifier("departments"));
+                    assert_eq!(exprs[1], Expr::WildcardUntil(vec![Expr::Identifier("staff")]));
+                    assert_eq!(exprs[2], Expr::Wildcard);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        assert!(matches!(iter.next(), Some(Ok(Expr::EOI))));
+        Ok(())
+    }
 }

@@ -2,7 +2,7 @@
 name = "lens"
 version = "0.1.0"
 edition = "2024"
-description = "A logic gate simulation plugin for Bevy."
+description = "Unified Lens query language"
 authors = ["cuppachino"]
 homepage = "https://github.com/cuppachino/lens"
 repository = "https://github.com/cuppachino/lens"

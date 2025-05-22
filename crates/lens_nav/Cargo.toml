@@ -1,0 +1,13 @@
+[package]
+name = "lens_nav"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"], optional = true }
+serde_json = { version = "1.0.140", optional = true }
+
+[features]
+default = []
+json = ["dep:serde", "dep:serde_json"]

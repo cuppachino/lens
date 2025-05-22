@@ -1,0 +1,14 @@
+[package]
+name = "lens"
+version = "0.1.0"
+edition = "2024"
+description = "A logic gate simulation plugin for Bevy."
+authors = ["cuppachino"]
+homepage = "https://github.com/cuppachino/lens"
+repository = "https://github.com/cuppachino/lens"
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+pest = "2.8.0"
+pest_derive = "2.8.0"

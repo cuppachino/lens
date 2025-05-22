@@ -1,0 +1,63 @@
+WHITESPACE = _{ " " | "\t" }
+
+lenses = { SOI ~ lens ~ (";" ~ lens)* ~ ";"? ~ EOI }
+
+lens = { expr ~ ("." ~ expr)* }
+
+expr      =  { core_expr ~ "?"? }
+core_expr = _{ concrete_expr | wildcard_expr }
+
+concrete_expr      = _{
+  
+  | union
+  | core_concrete_expr
+}
+core_concrete_expr = _{
+    group
+  | range_expr
+  | quoted
+  | index
+  | identifier
+}
+
+wildcard_expr = _{
+  
+  | wildcard_range_inclusive
+  | wildcard_range
+  | wildcard_recursive
+  | wildcard_exact
+  | wildcard
+}
+
+union = { (core_concrete_expr) ~ ("|" ~ (core_concrete_expr))+ }
+
+group = _{ "(" ~ lens ~ ")" }
+
+range_expr      = _{ range | range_inclusive }
+range_inclusive =  { int ~ "..=" ~ int }
+range           =  { int ~ ".." ~ int }
+
+// exactly 1
+wildcard = { "*" }
+// exactly {int}
+wildcard_exact = { "*" ~ int }
+// inclusive range, e.g. *..=5 or *2..=5
+wildcard_range_inclusive = { "*" ~ int? ~ "..=" ~ int }
+// exclusive range, e.g. *..5 or *2..5
+wildcard_range = { "*" ~ int? ~ ".." ~ int }
+// 0 or more - until next token
+wildcard_recursive = {
+    "**" ~ ("." ~ concrete_expr ~ "?")*? ~ ("." ~ concrete_expr)?
+}
+
+quoted        = @{ single_quoted | double_quoted }
+single_quoted =  { "'" ~ (escaped_sq | !"'" ~ ANY)* ~ "'" }
+double_quoted =  { "\"" ~ (escaped_dq | !"\"" ~ ANY)* ~ "\"" }
+escaped_sq    =  { "\\'" }
+escaped_dq    =  { "\\\"" }
+
+identifier = @{ (ASCII_ALPHANUMERIC | "_" | "-")+ }
+
+index = { int }
+
+int = @{ ASCII_DIGIT+ }

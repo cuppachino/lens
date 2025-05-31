@@ -1,0 +1,13 @@
+
+// Filter lens Definitions
+'has_id('id): ~{ id == 'id };
+
+// Query Lens Definitions
+'users('of_department): *.departments.**.'of_department.users;
+
+'user('dept, 'id): 
+    'users('dept).'id 
+  | 'users('dept).**.*~{ 'has_id('id) };
+
+// Main Query
+'user()

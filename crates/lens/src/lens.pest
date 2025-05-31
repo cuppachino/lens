@@ -1,63 +1,191 @@
-WHITESPACE = _{ " " | "\t" }
+WHITESPACE = _{ " " | "\t" | NEWLINE | COMMENT }
 
-lenses = { SOI ~ lens ~ (";" ~ lens)* ~ ";"? ~ EOI }
+program = { SOI ~ lens_definitions ~ main_query ~ EOI }
 
-lens = { expr ~ ("." ~ expr)* }
+// MAIN
+lens_definitions = _{ lens_definition* }
+main_query       =  { query }
 
-expr      =  { core_expr ~ "?"? }
-core_expr = _{ concrete_expr | wildcard_expr }
+// QUERY EXPR
+query_group = { "(" ~ query ~ ")" }
+query       = { (molecule ~ (query_infix ~ molecule)*) }
 
-concrete_expr      = _{
-  
-  | union
-  | core_concrete_expr
-}
-core_concrete_expr = _{
-    group
+// - QUERY MOLECULE
+molecule      =  { molecule_term ~ !(molecule_term) ~ ("." ~ molecule_term)* }
+molecule_term = _{ query_atom ~ query_postfix? }
+
+// - QUERY ATOM
+query_atom = _{
+    wildcard_expr
   | range_expr
-  | quoted
-  | index
+  | lens_call
+  | int
   | identifier
+  | string
+  | query_group
 }
 
-wildcard_expr = _{
+// === QUERY POSTFIX   ===
+/// Path postfix can be an assertion, a filter lens call (not a molecule), or a hanging infix lens.
+query_postfix = { optional | assertion | (filter_lens ~ (optional | assertion)) | filter_lens }
+
+// - QUERY INFIX
+query_infix = _{ path_binary_op | infix_lens* }
+
+infix_lens     = { "`" ~ identifier ~ "`" }
+path_binary_op = {
+    union
+  | intersect
+}
+union          = { "|" }
+intersect      = { "&" }
+
+// FILTER
+filter_lens = { "~" ~ "{" ~ filter_expr_list ~ "}" }
+
+// FILTER EXPR
+filter_group     =  { "(" ~ filter_expr ~ ")" }
+filter_expr_list = _{ filter_expr ~ ("," ~ filter_expr)* ~ ","? }
+filter_expr      = _{ filter_primary ~ (filter_infix ~ filter_primary)* ~ filter_postfix* }
+filter_primary   = _{
+    filter_operation
+  | filter_group
+}
+// - FILTER OPERATION
+filter_operation          =  { (filter_term ~ filter_infix ~ filter_term ~ (filter_infix ~ filter_term)*) | filter_implicit_operation }
+filter_term               = _{ filter_prefix* ~ filter_atom ~ filter_postfix* }
+filter_implicit_operation = _{
+    filter_lens_call
+  | filter_lens
+  | filter_group
+  | (neg? ~ (float_lens | filter_lens_call | lens_call))
+  | molecule
+}
+// - FILTER ATOM
+filter_atom = _{
+    filter_group
+  | float_lens
+  | filter_implicit_operation
+  | query_atom
+}
+
+// === FILTER POSTFIX   ===
+/// Filter postfix can be an assertion, a filter lens call (not a molecule), or a hanging infix lens.
+filter_postfix = { assertion | filter_lens }
+
+// === FILTER INFIX     ===
+filter_infix     = _{ filter_binary_op | infix_lens }
+filter_binary_op =  {
+    union
+  | eq
+  | or
+  | and
+  | neq
+  | lte
+  | lt
+  | gte
+  | gt
+  | add
+  | sub
+  | mul
+  | div
+}
+or               =  { "||" }
+and              =  { "&&" }
+eq               =  { "==" | "=" }
+neq              =  { "!=" }
+lt               =  { "<" }
+lte              =  { "<=" }
+gt               =  { ">" }
+gte              =  { ">=" }
+add              =  { "+" }
+sub              =  { "-" }
+mul              =  { "*" }
+div              =  { "/" }
+
+// PREFIX
+filter_prefix = _{ not | neg }
+not           =  { "!" }
+neg           =  { "-" }
+
+// POSTFIX
+optional  = { "?" }
+assertion = { "!" }
+
+// LENS
+lens_ident      =  { "'" ~ identifier ~ !ASCII_ALPHANUMERIC }
+lens_param_list = _{ lens_param ~ ("," ~ lens_param)* }
+lens_param      =  { lens_ident }
+query_lens_def  =  { lens_ident ~ ("(" ~ lens_param_list ~ ")")? ~ ":" ~ query ~ ";" }
+filter_lens_def =  { lens_ident ~ ("(" ~ lens_param_list ~ ")")? ~ ":" ~ "~" ~ "{" ~ filter_expr_list ~ "}" ~ ";" }
+lens_definition =  {
+    query_lens_def
+  | filter_lens_def
+}
+lens_call       =  { lens_ident ~ ("(" ~ (lens_arg_list)? ~ ")")? }
+lens_arg_list   = _{ lens_arg ~ ("," ~ lens_arg)* ~ ","? }
+lens_arg        =  { molecule | query | filter_expr }
+
+/// All molecules are filters, but not all filters are molecules. Any call without a dot has the potential to be a filter lens call.
+/// This is an early attempt at lens type inference, which is not yet fully implemented.
+filter_lens_call = _{ lens_call ~ !"." }
+
+// PRIMITIVE
+identifier = @{ (ASCII_ALPHANUMERIC | "_" | "-")+ ~ !(ASCII_ALPHANUMERIC) }
+string     = @{ "\"" ~ (escaped_dq | !"\"" ~ ANY)* ~ "\"" }
+escaped_dq =  { "\\\"" }
+COMMENT    = @{ "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE? }
+
+// RANGES
+range_expr      = _{ range_exclusive | range_inclusive }
+range_inclusive =  { int ~ "..=" ~ int }
+range_exclusive =  { int ~ ".." ~ int }
+
+// WILDCARDS
+wildcard_expr            = _{
   
   | wildcard_range_inclusive
-  | wildcard_range
+  | wildcard_range_exclusive
   | wildcard_recursive
   | wildcard_exact
   | wildcard
 }
-
-union = { (core_concrete_expr) ~ ("|" ~ (core_concrete_expr))+ }
-
-group = _{ "(" ~ lens ~ ")" }
-
-range_expr      = _{ range | range_inclusive }
-range_inclusive =  { int ~ "..=" ~ int }
-range           =  { int ~ ".." ~ int }
-
-// exactly 1
-wildcard = { "*" }
-// exactly {int}
-wildcard_exact = { "*" ~ int }
-// inclusive range, e.g. *..=5 or *2..=5
-wildcard_range_inclusive = { "*" ~ int? ~ "..=" ~ int }
-// exclusive range, e.g. *..5 or *2..5
-wildcard_range = { "*" ~ int? ~ ".." ~ int }
-// 0 or more - until next token
-wildcard_recursive = {
-    "**" ~ ("." ~ concrete_expr ~ "?")*? ~ ("." ~ concrete_expr)?
+wildcard                 =  { "*" }
+wildcard_exact           =  { "*" ~ int }
+wildcard_range_inclusive =  { "*" ~ int? ~ "..=" ~ int }
+wildcard_range_exclusive =  { "*" ~ int? ~ ".." ~ int }
+wildcard_recursive       =  {
+    "**" ~ ("." ~ path_atom_non_wild ~ "?")*? ~ ("." ~ path_atom_non_wild)?
+}
+path_atom_non_wild       = _{
+    query_group
+  | lens_call
+  | int
+  | identifier
+  | float_lens
+  | string
+  | range_expr
 }
 
-quoted        = @{ single_quoted | double_quoted }
-single_quoted =  { "'" ~ (escaped_sq | !"'" ~ ANY)* ~ "'" }
-double_quoted =  { "\"" ~ (escaped_dq | !"\"" ~ ANY)* ~ "\"" }
-escaped_sq    =  { "\\'" }
-escaped_dq    =  { "\\\"" }
+int = @{ ASCII_DIGIT+ ~ !(identifier) }
 
-identifier = @{ (ASCII_ALPHANUMERIC | "_" | "-")+ }
+// FLOAT
+float_lens = _{ "'" ~ float }
 
-index = { int }
+// FLOAT SYNTAX
+float = { float_dec | float_sci | float_int }
 
-int = @{ ASCII_DIGIT+ }
+float_dec = { dec_int ~ "." ~ dec_frac ~ float_suffix }
+float_sci = { (dec_int ~ ("." ~ dec_frac)) ~ exp_part ~ float_suffix }
+float_int = { dec_int ~ float_suffix }
+
+dec_int  = @{ ASCII_DIGIT+ ~ ("_" ~ ASCII_DIGIT+)* }
+dec_frac = @{ ASCII_DIGIT+ ~ ("_" ~ ASCII_DIGIT+)* }
+
+exp_part = { ("e" | "E") ~ sign? ~ dec_int }
+
+sign = { "+" | "-" }
+
+float_suffix =  { f32_suffix | f64_suffix }
+f32_suffix   = _{ "_f32" | "f32" }
+f64_suffix   = _{ "_f64" | "f64" }

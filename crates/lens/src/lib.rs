@@ -1,19 +1,71 @@
-mod ast;
-mod error;
-
-/// `use lens::prelude::*;` to import common traits, types, and functions.
-pub mod prelude {
-    pub use crate::ast::{ Expr, LensesIter, Range };
-    pub use crate::error::{ LensError, ParserError };
-}
+pub mod tokens;
 
 #[cfg(test)]
 mod tests {
-    use crate::{ ast::{ Expr, LensesIter, Range }, error::LensError };
+    use crate::tokens::{ error::TokenError, prelude::*, tokenizer::Tokenizer };
 
-    use super::*;
+    type TestResult<T = ()> = Result<T, TokenError>;
 
-    pub type TestResult<'a> = Result<(), LensError<'a>>;
+    fn main_query(input: &str) -> Result<Token, TokenError> {
+        let tokens = Tokenizer::from_input(input)
+            .map_err(pretty)?
+            .collect::<Result<Vec<Token>, _>>()?;
+        let token = tokens.into_iter().last().unwrap();
+        Ok(token)
+    }
+
+    fn first_main_filter(input: &str) -> Result<Filter, TokenError> {
+        let tokens = Tokenizer::from_input(input)
+            .map_err(pretty)?
+            .collect::<Result<Vec<Token>, _>>()?;
+
+        let filter: Filter = tokens
+            .into_iter()
+            .find_map(|t| {
+                if let Token::Main(query) = t {
+                    query.into_iter().find_map(|qt| {
+                        match qt {
+                            QueryToken::Filter(filter) => { Some(filter) }
+                            QueryToken::Molecule(mol) =>
+                                mol.into_iter().find_map(|qt| {
+                                    if let QueryToken::Filter(filter) = qt {
+                                        Some(filter)
+                                    } else {
+                                        None
+                                    }
+                                }),
+                            _ => { None }
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
+            .expect("No filter found in main query");
+
+        Ok(filter)
+    }
+
+    macro_rules! assert_main_query_eq {
+        ($input:expr, $expected:expr, debug) => {
+            let actual = main_query($input)?;
+            println!("Resolved Type: {:#?}", actual);
+            println!("Input: {}", $input);
+            println!("Resolved: {actual}");
+            assert_eq!(actual, $expected);
+        };
+        ($input:expr, $expected:expr) => {
+            let actual = main_query($input)?;
+            assert_eq!(actual, $expected);
+        };
+    }
+
+    macro_rules! assert_first_main_filter_eq {
+        ($input:expr, $expected:expr) => {
+            let actual = first_main_filter($input)?;
+            assert_eq!(actual, $expected);
+        };
+    }
 
     #[inline]
     pub(crate) fn pretty<D: std::fmt::Display>(err: D) -> D {
@@ -21,320 +73,374 @@ mod tests {
         err
     }
 
-    #[inline]
-    pub(crate) fn single_lens(input: &str) -> Result<Vec<Expr<'_>>, LensError> {
-        let lenses = LensesIter::try_from(input).map_err(pretty)?.collect::<Result<Vec<_>, _>>()?;
+    /* #[test]
+    fn goal() -> TestResult {
+        // todo: lambda lens
+        let input =
+            r#"
+            'names: **.departments.**.staff.name;
+            'is_name('name): ~ { name == 'name };
+            'age('name): **.users.**.*~{ 'is_name('name) }.age;
+            'user('name): -> { name = 'name, age = 'age('name) };
+            'user('names)
+        "#.trim();
 
-        (
-            match lenses.into_iter().next() {
-                Some(Expr::Lens(exprs)) => { Ok(exprs) }
-                None => { Err(LensError::EmptyInput) }
-                _ => {
-                    Err(
-                        LensError::PestError(
-                            pest::error::Error::new_from_span(
-                                pest::error::ErrorVariant::CustomError {
-                                    message: "Expected a single lens".into(),
-                                },
-                                pest::Span::new(input, 0, input.len()).unwrap()
-                            )
-                        )
-                    )
-                }
-            }
-        ).map_err(pretty)
-    }
-
-    #[inline]
-    pub(crate) fn single_token(input: &str) -> Result<Expr<'_>, LensError> {
-        single_lens(input)?.into_iter().next().ok_or(LensError::EmptyInput)
-    }
-
-    macro_rules! first_token {
-        ($input:expr, $expected:expr) => {
-            let input = $input;
-            let expected = $expected;
-            let token = single_token(input)?;
-            println!("{input}: {:?}", token);
-            assert_eq!(token, expected);
-        };
-    }
-
-    pub fn parse_lenses(input: &str) -> Result<Vec<ast::Expr<'_>>, error::LensError> {
-        LensesIter::try_from(input)?.collect::<Result<Vec<_>, _>>()
-    }
+        let tokens = Tokenizer::from_input(input)
+            .map_err(pretty)?
+            .collect::<Result<Vec<Token>, _>>()?;
+        Ok(())
+    } */
 
     #[test]
-    fn multi_lens() -> TestResult<'static> {
-        let input = "a.*";
-        let expected = &[Expr::Lens(vec![Expr::Identifier("a"), Expr::Wildcard])];
-        let mut paths = parse_lenses(input)?;
-        let last = paths.pop();
-        assert_eq!(last, Some(Expr::EOI));
+    fn string() -> TestResult {
+        let input = "\"a\"";
+        let expected = Token::Main(vec![QueryToken::Atom(Atom::String(input.to_string()))].into());
+        assert_main_query_eq!(input, expected);
 
-        println!("{input}: {:?}", paths);
-        assert_eq!(paths.len(), 1);
-        assert_eq!(paths, expected);
-
-        let input = "a.*;b.**";
-        let expected = &[
-            Expr::Lens(vec![Expr::Identifier("a"), Expr::Wildcard]),
-            Expr::Lens(vec![Expr::Identifier("b"), Expr::WildcardUntil(vec![])]),
-        ];
-        let mut paths = parse_lenses(input)?;
-        let last = paths.pop();
-        assert_eq!(last, Some(Expr::EOI));
-        println!("{input}: {:?}", paths);
-        assert_eq!(paths.len(), 2);
-        assert_eq!(paths, expected);
-
-        let input = "a.*;b.**;c.*";
-        let expected = &[
-            Expr::Lens(vec![Expr::Identifier("a"), Expr::Wildcard]),
-            Expr::Lens(vec![Expr::Identifier("b"), Expr::WildcardUntil(vec![])]),
-            Expr::Lens(vec![Expr::Identifier("c"), Expr::Wildcard]),
-        ];
-        let mut paths = parse_lenses(input)?;
-        let last = paths.pop();
-        assert_eq!(last, Some(Expr::EOI));
-        println!("{input}: {:?}", paths);
-        assert_eq!(paths.len(), 3);
-        assert_eq!(paths, expected);
+        let input = r#""a.b.c""#;
+        let expected = Token::Main(vec![QueryToken::Atom(Atom::String(input.to_string()))].into());
+        assert_main_query_eq!(input, expected);
         Ok(())
     }
 
     #[test]
-    fn quoted() -> TestResult<'static> {
-        let input = "'a'";
-        let expected = Expr::QuotedIdentifier("a");
-        first_token!(input, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn optional() -> TestResult<'static> {
-        let input = "a?";
-        let expected = Expr::Identifier("a").into_optional();
-        first_token!(input, expected);
-
-        let input = "a.b.c?";
-        let expected = &[
-            Expr::Identifier("a"),
-            Expr::Identifier("b"),
-            Expr::Identifier("c").into_optional(),
-        ];
-        let tokens = single_lens(input)?;
-        assert_eq!(tokens.len(), 3);
-        assert_eq!(tokens, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn union() -> TestResult<'static> {
-        let input = "a|\"b\"|'c'";
-        let expected = Expr::Union(
-            vec![Expr::Identifier("a"), Expr::QuotedIdentifier("b"), Expr::QuotedIdentifier("c")]
-        );
-        first_token!(input, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn index() -> TestResult<'static> {
+    fn index() -> TestResult {
         let input = "0";
-        let expected = Expr::Index(0);
-        first_token!(input, expected);
+        let expected = Token::Main(vec![QueryToken::Atom(Atom::Index(0))].into());
+        assert_main_query_eq!(input, expected);
 
         let input = "a.0";
-        let expected = &[Expr::Identifier("a"), Expr::Index(0)];
-        let tokens = single_lens(input)?;
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens, expected);
+        let expected = Token::Main(
+            vec![
+                QueryToken::Molecule(
+                    vec![
+                        QueryToken::Atom(Atom::Ident("a".to_string())),
+                        QueryToken::Atom(Atom::Index(0))
+                    ].into()
+                )
+            ].into()
+        );
+        assert_main_query_eq!(input, expected);
         Ok(())
     }
 
     #[test]
-    fn range() -> TestResult<'static> {
-        let input = "0..2";
-        let expected = Expr::Range(Range::exclusive(0, 2));
-        first_token!(input, expected);
+    fn float_basic() -> TestResult {
+        let expected = Filter(
+            vec![
+                FilterToken::Operation(
+                    FilterOperation(vec![FilterOperationToken::Atom(Atom::Float(Float::F64(3.14)))])
+                )
+            ]
+        );
+        let input = "*~{ '3.14_f64 }";
+        assert_first_main_filter_eq!(input, expected);
+        let input = "*~{ '3.14f64 }";
+        assert_first_main_filter_eq!(input, expected);
 
-        let input = "0..=2";
-        let expected = Expr::Range(Range::inclusive(0, 2));
-        first_token!(input, expected);
+        let expected = Filter(
+            vec![
+                FilterToken::Operation(
+                    FilterOperation(vec![FilterOperationToken::Atom(Atom::Float(Float::F32(3.14)))])
+                )
+            ]
+        );
+        let input = "*~{ '3.14_f32 }";
+        assert_first_main_filter_eq!(input, expected);
+        let input = "*~{ '3.14f32 }";
+        assert_first_main_filter_eq!(input, expected);
 
-        let input = "a.0.0..=2";
-        let expected = &[
-            Expr::Identifier("a"),
-            Expr::Index(0),
-            Expr::Range(Range::inclusive(0, 2)),
-        ];
-        let tokens = single_lens(input)?;
-        assert_eq!(tokens.len(), 3);
-        assert_eq!(tokens, expected);
+        let expected = Filter(
+            vec![
+                FilterToken::Operation(
+                    FilterOperation(vec![FilterOperationToken::Atom(Atom::Float(Float::F32(3.0)))])
+                )
+            ]
+        );
+        let input = "*~{ '3.0f32 }";
+        assert_first_main_filter_eq!(input, expected);
+        let input = "*~{ '3.0_f32 }";
+        assert_first_main_filter_eq!(input, expected);
         Ok(())
     }
 
     #[test]
-    fn wildcard() -> TestResult<'static> {
-        let input = "*";
-        let expected = Expr::Wildcard;
-        first_token!(input, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn wildcard_exact() -> TestResult<'static> {
-        let input = "*3";
-        let expected = Expr::WildcardN(3);
-        first_token!(input, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn wildcard_until_none() -> TestResult<'static> {
-        let input = "**";
-        let expected = Expr::WildcardUntil(vec![]);
-        first_token!(input, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn wildcard_until_some_some() -> TestResult<'static> {
-        let input = "**.token.name";
-        let expected = &[
-            Expr::WildcardUntil(vec![Expr::Identifier("token")]),
-            Expr::Identifier("name"),
-        ];
-        let tokens = single_lens(input)?;
-        println!("{input}: {:?}", tokens);
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens, expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn wildcard_until_optional_some() -> TestResult<'static> {
-        let input = "**.token?.name.*";
-        let expected = &[
-            Expr::WildcardUntil(
-                vec![Expr::Identifier("token").into_optional(), Expr::Identifier("name")]
-            ),
-            Expr::Wildcard,
-        ];
-        let tokens = single_lens(input)?;
-        println!("{input}: {:?}", tokens);
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens, expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn wildcard_range_inclusive() -> TestResult<'static> {
-        let input = "*..=2";
-        let expected = Expr::WildcardRange(Range::inclusive(0, 2));
-        first_token!(input, expected);
-
-        let input = "*1..=2";
-        let expected = Expr::WildcardRange(Range::inclusive(1, 2));
-        first_token!(input, expected);
-
-        let input = "a.*..=2";
-        let expected = &[Expr::Identifier("a"), Expr::WildcardRange(Range::inclusive(0, 2))];
-        let tokens = single_lens(input)?;
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens, expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn wildcard_range_exclusive() -> TestResult<'static> {
-        let input = "*..2";
-        let expected = Expr::WildcardRange(Range::exclusive(0, 2));
-        first_token!(input, expected);
-
-        let input = "*1..2";
-        let expected = Expr::WildcardRange(Range::exclusive(1, 2));
-        first_token!(input, expected);
-
-        let input = "a.*..2";
-        let expected = &[Expr::Identifier("a"), Expr::WildcardRange(Range::exclusive(0, 2))];
-        let tokens = single_lens(input)?;
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens, expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn grouping() -> TestResult<'static> {
-        let input = "a|(b.*.0..4).*3..=4.info?.name";
-        let expected = &[
-            Expr::Union(
-                vec![
-                    Expr::Identifier("a"),
-                    Expr::Lens(
+    fn float_scientific() -> TestResult {
+        // in a query, floats shouldn't be parsed at all.
+        let input = "'3.14e2_f64";
+        let expected = Token::Main(
+            vec![
+                QueryToken::Molecule(
+                    Molecule(
                         vec![
-                            Expr::Identifier("b"),
-                            Expr::Wildcard,
-                            Expr::Range(Range::exclusive(0, 4))
+                            QueryToken::Atom(
+                                Atom::Call(LensCall {
+                                    lens: "3".to_string().into(),
+                                    args: vec![],
+                                })
+                            ),
+                            QueryToken::Atom(Atom::Ident("14e2_f64".to_string()))
                         ]
                     )
-                ]
+                )
+            ].into()
+        );
+        assert_main_query_eq!(input, expected);
+
+        // but in a filter they should be parsed as floats.
+        let input = "*~{ '3.14e2_f64 }";
+        let expected = Token::Main(
+            vec![
+                QueryToken::Molecule(
+                    vec![
+                        QueryToken::Atom(Atom::Wild(Wild::Once)),
+                        QueryToken::Filter(
+                            Filter(
+                                vec![
+                                    FilterToken::Operation(
+                                        FilterOperation(
+                                            vec![
+                                                FilterOperationToken::Atom(
+                                                    Atom::Float(Float::F64(3.14e2))
+                                                )
+                                            ]
+                                        )
+                                    )
+                                ]
+                            )
+                        )
+                    ].into()
+                )
+            ].into()
+        );
+        assert_main_query_eq!(input, expected);
+
+        // check other other sign
+        let input = "*~{ '3.14e+2f64 }";
+        let expected = Token::Main(
+            vec![
+                QueryToken::Molecule(
+                    vec![
+                        QueryToken::Atom(Atom::Wild(Wild::Once)),
+                        QueryToken::Filter(
+                            Filter(
+                                vec![
+                                    FilterToken::Operation(
+                                        FilterOperation(
+                                            vec![
+                                                FilterOperationToken::Atom(
+                                                    Atom::Float(Float::F64(3.14e2))
+                                                )
+                                            ]
+                                        )
+                                    )
+                                ]
+                            )
+                        )
+                    ].into()
+                )
+            ].into()
+        );
+        assert_main_query_eq!(input, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn float_negated() -> TestResult {
+        let input = "a~{ -'2_f64 }";
+        let expected = Token::Main(
+            vec![
+                QueryToken::Molecule(
+                    vec![
+                        QueryToken::Atom(Atom::Ident("a".to_string())),
+                        QueryToken::Filter(
+                            Filter(
+                                vec![
+                                    FilterToken::Operation(
+                                        FilterOperation(
+                                            vec![
+                                                FilterOperationToken::Prefix(FilterPrefix::Neg),
+                                                FilterOperationToken::Atom(
+                                                    Atom::Float(Float::F64(2.0))
+                                                )
+                                            ]
+                                        )
+                                    )
+                                ]
+                            )
+                        )
+                    ].into()
+                )
+            ].into()
+        );
+
+        assert_main_query_eq!(input, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fail_query_postfix() -> TestResult {
+        let input = "a??";
+        let err = Tokenizer::from_input(input).expect_err("illegal double postfix");
+        assert!(matches!(err, TokenError::Parsing(_)));
+
+        let input = "a?!";
+        let err = Tokenizer::from_input(input).expect_err("illegal double postfix");
+        assert!(matches!(err, TokenError::Parsing(_)));
+
+        let input = "a!a";
+        let err = Tokenizer::from_input(input).expect_err("postfix between atoms, not a query");
+        assert!(matches!(err, TokenError::Parsing(_)));
+
+        let input = "a~{ b }?!";
+        let err = Tokenizer::from_input(input).expect_err("illegal triple postfix combination");
+        assert!(matches!(err, TokenError::Parsing(_)));
+
+        let input = "a~{ b }!?";
+        let err = Tokenizer::from_input(input).expect_err("illegal triple postfix combination");
+        assert!(matches!(err, TokenError::Parsing(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn pass_query_postfix() -> TestResult {
+        let input = "a?.b!.c~{ d }!";
+        let expected = Token::Main(
+            vec![
+                QueryToken::Molecule(
+                    vec![
+                        QueryToken::Atom(Atom::Ident("a".to_string())),
+                        QueryToken::Postfix(Postfix::Optional),
+                        QueryToken::Atom(Atom::Ident("b".to_string())),
+                        QueryToken::Postfix(Postfix::Assertion),
+                        QueryToken::Atom(Atom::Ident("c".to_string())),
+                        QueryToken::Filter(
+                            vec![
+                                FilterToken::Operation(
+                                    FilterOperation(
+                                        vec![
+                                            FilterOperationToken::Atom(Atom::Ident("d".to_string()))
+                                        ]
+                                    )
+                                )
+                            ].into()
+                        ),
+                        QueryToken::Postfix(Postfix::Assertion)
+                    ].into()
+                )
+            ].into()
+        );
+
+        assert_main_query_eq!(input, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn query_infix() -> TestResult {
+        let input = "0 | a | b & c | d & (e & f | g) `and` h `and` `foo` 1";
+        let expected = Token::Main(
+            vec![
+                QueryToken::Atom(Atom::Index(0)),
+                QueryToken::Infix(Infix::Union),
+                QueryToken::Atom(Atom::Ident("a".to_string())),
+                QueryToken::Infix(Infix::Union),
+
+                QueryToken::Atom(Atom::Ident("b".to_string())),
+                QueryToken::Infix(Infix::Intersection),
+                QueryToken::Atom(Atom::Ident("c".to_string())),
+
+                QueryToken::Infix(Infix::Union),
+
+                QueryToken::Atom(Atom::Ident("d".to_string())),
+                QueryToken::Infix(Infix::Intersection),
+                QueryToken::Group(
+                    vec![
+                        QueryToken::Atom(Atom::Ident("e".to_string())),
+                        QueryToken::Infix(Infix::Intersection),
+                        QueryToken::Atom(Atom::Ident("f".to_string())),
+                        QueryToken::Infix(Infix::Union),
+                        QueryToken::Atom(Atom::Ident("g".to_string()))
+                    ].into()
+                ),
+                QueryToken::Infix(Infix::Lens("and".to_string().into())),
+                QueryToken::Atom(Atom::Ident("h".to_string())),
+                QueryToken::Infix(Infix::Lens("and".to_string().into())),
+                QueryToken::Infix(Infix::Lens("foo".to_string().into())),
+                QueryToken::Atom(Atom::Index(1))
+            ].into()
+        );
+
+        assert_main_query_eq!(input, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn query_def() -> TestResult {
+        let input = "'foo('a, 'b): 'b?.'a(1) | 'b~{ 'c }; 'foo(a, b)";
+        let expected = Token::Definition(Definition {
+            lens: LensIdent("foo".into()),
+            params: vec![LensParam(LensIdent("a".into())), LensParam(LensIdent("b".into()))],
+            body: LensBody::Query(
+                vec![
+                    QueryToken::Molecule(
+                        vec![
+                            QueryToken::Atom(
+                                Atom::Call(LensCall {
+                                    lens: LensIdent("b".to_string()),
+                                    args: vec![],
+                                })
+                            ),
+                            QueryToken::Postfix(Postfix::Optional),
+                            QueryToken::Atom(
+                                Atom::Call(LensCall {
+                                    lens: LensIdent("a".to_string()),
+                                    args: vec![Token::QueryToken(QueryToken::Atom(Atom::Index(1)))],
+                                })
+                            )
+                        ].into()
+                    ),
+                    QueryToken::Infix(Infix::Union),
+                    QueryToken::Molecule(
+                        vec![
+                            QueryToken::Atom(
+                                Atom::Call(LensCall {
+                                    lens: LensIdent("b".to_string()),
+                                    args: vec![],
+                                })
+                            ),
+                            QueryToken::Filter(
+                                Filter(
+                                    vec![
+                                        FilterToken::Operation(
+                                            FilterOperation(
+                                                vec![
+                                                    FilterOperationToken::Implicit(
+                                                        ImplicitFilterToken::Call(LensCall {
+                                                            lens: LensIdent("c".into()),
+                                                            args: vec![],
+                                                        })
+                                                    )
+                                                ]
+                                            )
+                                        )
+                                    ]
+                                )
+                            )
+                        ].into()
+                    )
+                ].into()
             ),
-            Expr::WildcardRange(Range::inclusive(3, 4)),
-            Expr::Identifier("info").into_optional(),
-            Expr::Identifier("name"),
-        ];
-        let tokens = single_lens(input)?;
-        println!("{input}: {:?}", tokens);
-        assert_eq!(tokens.len(), 4);
-        assert_eq!(tokens, expected);
+        });
 
-        Ok(())
-    }
+        let tok = Tokenizer::from_input(input).map_err(pretty)?;
+        let tokens = tok.collect::<Result<Vec<Token>, _>>()?;
 
-    #[test]
-    fn everything() -> TestResult<'static> {
-        let input = "a|b.*.0..=2.*3..=4.info?.name;(c.**.age)|(d.*.number)";
-        let expected = &[
-            Expr::Union(vec![Expr::Identifier("a"), Expr::Identifier("b")]),
-            Expr::Wildcard,
-            Expr::Range(Range::inclusive(0, 2)),
-            Expr::WildcardRange(Range::inclusive(3, 4)),
-            Expr::Identifier("info").into_optional(),
-            Expr::Identifier("name"),
-        ];
-        let tokens = single_lens(input)?;
-        println!("{input}: {:?}", tokens);
-        assert_eq!(tokens.len(), 6);
-        assert_eq!(tokens, expected);
+        let def = tokens.into_iter().next().unwrap();
+        assert_eq!(def, expected);
 
-        Ok(())
-    }
-
-    #[test]
-    fn readme_example() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::prelude::*;
-
-        let mut iter = LensesIter::try_from("departments.**.staff.*")?;
-        for expr in iter.by_ref().take(1) {
-            let expr = expr?;
-            match expr {
-                Expr::Lens(exprs) => {
-                    assert_eq!(exprs.len(), 3);
-                    assert_eq!(exprs[0], Expr::Identifier("departments"));
-                    assert_eq!(exprs[1], Expr::WildcardUntil(vec![Expr::Identifier("staff")]));
-                    assert_eq!(exprs[2], Expr::Wildcard);
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        assert!(matches!(iter.next(), Some(Ok(Expr::EOI))));
         Ok(())
     }
 }

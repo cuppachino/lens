@@ -23,8 +23,8 @@ fn load_lens_files(dir: &str) -> Vec<(String, String)> {
 fn bench_tokenizer(c: &mut Criterion) {
     let files = load_lens_files("bench_data/");
 
-    for (_name, content) in &files {
-        c.bench_function("tokenize all .lens", |b| {
+    for (name, content) in &files {
+        c.bench_function(&format!("tokenize {}", name), |b| {
             b.iter(|| {
                 Tokenizer::from_input(content).unwrap().collect::<Result<Vec<Token>, _>>().unwrap()
             });

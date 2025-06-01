@@ -201,6 +201,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_flat_debug"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91504001b16b779d4ebc06917ac01742d70e31e0feb3562e41fd2db0f0002655"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -296,7 +307,7 @@ name = "lens"
 version = "0.2.0"
 dependencies = [
  "criterion",
- "derive_flat_debug",
+ "derive_flat_debug 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more",
  "pest",
  "pest_derive",

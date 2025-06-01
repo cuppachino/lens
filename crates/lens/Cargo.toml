@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-derive_flat_debug = { path = "../derive_flat_debug" }
+derive_flat_debug = { version = "0.1" }
 derive_more = { version = "2.0.1", features = [
     "as_ref",
     "deref",

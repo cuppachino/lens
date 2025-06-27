@@ -51,7 +51,7 @@ This approach maintains syntactic consistency while clearly distinguishing betwe
 
 | Expression Type    | Syntax                   | Description                          | Implementation Status |
 | ------------------ | ------------------------ | ------------------------------------ | --------------------- |
-| Quoted Identifiers | `'field'`, `"field"`     | Field access with special characters | ✅                    |
+| Quoted Identifiers | `"field"`                | Field access with special characters | ✅                    |
 | Path Traversal     | `a.b.c`                  | Nested property navigation           | ✅                    |
 | Optional Access    | `field?`                 | Null-safe field access               | ✅                    |
 | Array Indexing     | `0`, `1`, `-1`           | Element access by position           | ✅                    |
